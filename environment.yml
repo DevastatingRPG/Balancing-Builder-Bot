@@ -1,0 +1,17 @@
+name: BB_9999
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - opencv
+  - matplotlib
+  - numpy
+  - sympy
+  - python=3.8.*
+  - oct2py
+  - oauth2client
+  - gspread
+  - pip:
+    - cbor
+    - cryptocode
+    - pyzmq
