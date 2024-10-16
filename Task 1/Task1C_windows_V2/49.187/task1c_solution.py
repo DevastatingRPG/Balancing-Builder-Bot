@@ -106,7 +106,7 @@ def sysCall_sensing():
     self.pos_error = calculate_signed_distance(body_pos, cone_pos, setpoint_pos)
 
     message, data, data2 = sim.getSimulatorMessage()
-    vel_offset = 0.2
+    vel_offset = 0.08
     deceleration_rate = 0.001  # Rate at which to decelerate
 
     if message == sim.message_keypress:
@@ -147,7 +147,6 @@ def sysCall_sensing():
         else:
             self.setpoint_pitch = 0
             self.decelerating = False  # Stop decelerating
-            # self.stationary = True
 
         self.pitch_error = self.setpoint_pitch - pitch
 

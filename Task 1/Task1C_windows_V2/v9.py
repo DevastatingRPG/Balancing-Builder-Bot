@@ -50,6 +50,22 @@ def calculate_signed_distance(body_pos, cone_pos, setpoint_pos):
     else:
         return -distance
 
+def velocity_direction(body_pos, cone_pos, linear_velocity):
+    # Calculate the vector from the body to the cone
+    vec_body_to_cone = np.array([cone_pos[0] - body_pos[0], cone_pos[1] - body_pos[1], cone_pos[2] - body_pos[2]])
+    
+    # Normalize the vector from the body to the cone
+    vec_body_to_cone_norm = vec_body_to_cone / np.linalg.norm(vec_body_to_cone)
+    
+    # Normalize the linear velocity vector
+    linear_velocity_norm = linear_velocity / np.linalg.norm(linear_velocity)
+    
+    # Calculate the dot product
+    dot_product = np.dot(vec_body_to_cone_norm, linear_velocity_norm)
+    
+    # Return 1 if the velocity is in the direction of the vector from the body to the cone, else return -1
+    return 1 if dot_product > 0 else -1
+
 def sysCall_init():
     sim = require('sim')
 
@@ -58,7 +74,7 @@ def sysCall_init():
     self.left_motor = sim.getObject('/left_joint')
     self.right_motor = sim.getObject('/right_joint')
 
-    self.pid_pitch = PIDController(kp=25, ki=3, kd=0, dt=0.5, integral_limit=5, output_limit=20, derivative_filter=0.1)
+    self.pid_pitch = PIDController(kp=60, ki=3, kd=0, dt=0.5, integral_limit=5, output_limit=20, derivative_filter=0.1)
     self.pid_pos = PIDController(kp=120, ki=2, kd=0, dt=0.5, integral_limit=5, output_limit=20, derivative_filter=0.1)
 
     self.stationary = True
@@ -76,17 +92,44 @@ def sysCall_init():
     self.pos_gain = 0
     self.pitch_gain = 0
 
+    self.prev_vel = 0
+
 def sysCall_actuation():
     self.pitch_gain = self.pid_pitch.compute(self.pitch_error)
 
     if self.stationary:
         self.pos_gain = self.pid_pos.compute(self.pos_error)
         
-    print(f"pitch_gain: {self.pitch_gain}")
-    print(f"pos_gain: {self.pos_gain}")
+    # print(f"pitch_gain: {self.pitch_gain}")
+    # print(f"pos_gain: {self.pos_gain}")
 
     vel = self.pitch_gain - self.pos_gain
-    print(f"Vel: {vel}\n")  # Debugging statement added
+    # print(f"Vel: {vel}\n")  # Debugging statement added
+    body_pos = sim.getObjectPosition(self.body, -1)
+    cone_pos = sim.getObjectPosition(self.cone, -1)
+    linear_velocity = sim.getObjectVelocity(self.body, -1)[0]
+
+    dir = velocity_direction(body_pos, cone_pos, linear_velocity)
+    # Detect direction change
+    if self.decelerating:
+        print(dir)
+        if np.sign(self.prev_vel) != np.sign(dir):
+        #     # Direction has changed, set the new setpoint to the current position
+            self.setpoint_pos = body_pos
+            self.decelerating = False
+
+            sim.setObjectFloatParameter(self.body, sim.shapefloatparam_init_velocity_x, 0)
+            sim.setObjectFloatParameter(self.body, sim.shapefloatparam_init_velocity_y, 0)
+            sim.setObjectFloatParameter(self.body, sim.shapefloatparam_init_velocity_z, 0)
+            sim.setObjectFloatParameter(self.body, sim.shapefloatparam_init_ang_velocity_x, 0)
+            sim.setObjectFloatParameter(self.body, sim.shapefloatparam_init_ang_velocity_y, 0)
+            sim.setObjectFloatParameter(self.body, sim.shapefloatparam_init_ang_velocity_z, 0)
+
+            eulerAngles = sim.getObjectOrientation(self.body)
+            roll, yaw = eulerAngles[0], eulerAngles[2]
+            sim.setObjectOrientation(self.body, -1, [roll, 0, yaw])
+
+    self.prev_vel = dir
 
     left_motor_vel = vel * 10 + self.manual_rotate * self.manual_rotate_speed
     right_motor_vel = vel * 10 - self.manual_rotate * self.manual_rotate_speed
@@ -99,16 +142,18 @@ def sysCall_sensing():
     roll, yaw, pitch = sim.alphaBetaGammaToYawPitchRoll(eulerAngles[0], eulerAngles[1], eulerAngles[2])
     self.pitch_error = self.setpoint_pitch - pitch
 
-    yaw = eulerAngles[2]
-
     body_pos = sim.getObjectPosition(self.body, -1)
     cone_pos = sim.getObjectPosition(self.cone, -1)
     setpoint_pos = self.setpoint_pos
 
-    self.pos_error = calculate_signed_distance(body_pos, cone_pos, setpoint_pos)
+    current_pos_error = calculate_signed_distance(body_pos, cone_pos, setpoint_pos)
+
+
+    
+    self.pos_error = current_pos_error
 
     message, data, data2 = sim.getSimulatorMessage()
-    vel_offset = 0.2
+    vel_offset = 0.3
     deceleration_rate = 0.001  # Rate at which to decelerate
 
     if message == sim.message_keypress:
@@ -116,46 +161,62 @@ def sysCall_sensing():
             self.manual_rotate = 0
             self.stationary = False
             self.setpoint_pitch = -vel_offset
-            self.setpoint_pos[0] += vel_offset * math.cos(yaw)
-            self.setpoint_pos[1] += vel_offset * math.sin(yaw)
-            self.decelerating = False
-            print("forward key pressed")
+            eulerAngles = sim.getObjectOrientation(self.body)
+            roll, yaw, pitch = eulerAngles[0], eulerAngles[2], -vel_offset
+            eulerAngles_ = sim.yawPitchRollToAlphaBetaGamma(yaw, roll, pitch)
+            print(eulerAngles_)
+            sim.setObjectOrientation(self.body, -1, eulerAngles_)
         elif data[0] == 2008:
             self.manual_rotate = 0
             self.stationary = False
             self.setpoint_pitch = vel_offset
-            self.setpoint_pos[0] -= vel_offset * math.cos(yaw)
-            self.setpoint_pos[1] -= vel_offset * math.sin(yaw)
-            self.decelerating = False
-            print("Backward key pressed")
+            eulerAngles = sim.getObjectOrientation(self.body)
+            roll, yaw, pitch = eulerAngles[0], eulerAngles[2], vel_offset
+            eulerAngles_ = sim.yawPitchRollToAlphaBetaGamma(yaw, roll, pitch)
+            print(eulerAngles_)
+            sim.setObjectOrientation(self.body, -1, eulerAngles_)
         elif data[0] == 2009:
             self.manual_rotate = 1
             if not self.stationary:
                 self.manual_rotate = 0.5
-            print("left key pressed")
         elif data[0] == 2010:
             self.manual_rotate = -1
             if not self.stationary:
                 self.manual_rotate = -0.5
-            print("right key pressed")
         elif data[0] == 113:
-            print("bot stopped")
             self.stationary = True
             self.manual_rotate = 0
-            self.decelerating = True  # Start decelerating
-
+            # self.decelerating = True
             self.setpoint_pos = sim.getObjectPosition(self.body, -1)
-
-    # Gradually decelerate to stop
-    if self.decelerating:
-        if abs(self.setpoint_pitch) > deceleration_rate:
-            self.setpoint_pitch -= np.sign(self.setpoint_pitch) * deceleration_rate
-        else:
             self.setpoint_pitch = 0
-            self.decelerating = False  # Stop decelerating
-            # self.stationary = True
 
-        self.pitch_error = self.setpoint_pitch - pitch
+            sim.setObjectFloatParameter(self.body, sim.shapefloatparam_init_velocity_x, 0)
+            sim.setObjectFloatParameter(self.body, sim.shapefloatparam_init_velocity_y, 0)
+            sim.setObjectFloatParameter(self.body, sim.shapefloatparam_init_velocity_z, 0)
+            sim.setObjectFloatParameter(self.body, sim.shapefloatparam_init_ang_velocity_x, 0)
+            sim.setObjectFloatParameter(self.body, sim.shapefloatparam_init_ang_velocity_y, 0)
+            sim.setObjectFloatParameter(self.body, sim.shapefloatparam_init_ang_velocity_z, 0)
+
+            eulerAngles = sim.getObjectOrientation(self.body)
+            roll, yaw, pitch = eulerAngles[0], eulerAngles[2], 0
+            eulerAngles_ = sim.yawPitchRollToAlphaBetaGamma(yaw, pitch, roll)
+            print(eulerAngles_)
+            sim.setObjectOrientation(self.body, -1, eulerAngles_)
+
+            self.pos_error = 0
+            self.pitch_error = 0
+            self.pos_gain = 0
+
+    #   # Gradually decelerate to stop
+    
+    # if self.decelerating:
+    #     if abs(self.setpoint_pitch) > deceleration_rate:
+    #         self.setpoint_pitch -= np.sign(self.setpoint_pitch) * deceleration_rate
+    #     else:
+    #         self.setpoint_pitch = 0
+    #         self.decelerating = False  # Stop decelerating
+
+    #     self.pitch_error = self.setpoint_pitch - pitch 
 
 def sysCall_cleanup():
     pass
