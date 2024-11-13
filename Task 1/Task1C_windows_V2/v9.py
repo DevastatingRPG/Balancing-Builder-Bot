@@ -74,8 +74,8 @@ def sysCall_init():
     self.left_motor = sim.getObject('/left_joint')
     self.right_motor = sim.getObject('/right_joint')
 
-    self.pid_pitch = PIDController(kp=60, ki=3, kd=0, dt=0.5, integral_limit=5, output_limit=20, derivative_filter=0.1)
-    self.pid_pos = PIDController(kp=120, ki=2, kd=0, dt=0.5, integral_limit=5, output_limit=20, derivative_filter=0.1)
+    self.pid_pitch = PIDController(kp=60, ki=3, kd=1, dt=0.5, integral_limit=5, output_limit=20, derivative_filter=0.1)
+    self.pid_pos = PIDController(kp=110, ki=2, kd=0, dt=0.5, integral_limit=5, output_limit=20, derivative_filter=0.1)
 
     self.stationary = True
     self.decelerating = False
@@ -112,7 +112,6 @@ def sysCall_actuation():
     dir = velocity_direction(body_pos, cone_pos, linear_velocity)
     # Detect direction change
     if self.decelerating:
-        print(dir)
         if np.sign(self.prev_vel) != np.sign(dir):
         #     # Direction has changed, set the new setpoint to the current position
             self.setpoint_pos = body_pos
@@ -131,8 +130,8 @@ def sysCall_actuation():
 
     self.prev_vel = dir
 
-    left_motor_vel = vel * 10 + self.manual_rotate * self.manual_rotate_speed
-    right_motor_vel = vel * 10 - self.manual_rotate * self.manual_rotate_speed
+    left_motor_vel = vel * 12 + self.manual_rotate * self.manual_rotate_speed
+    right_motor_vel = vel * 12 - self.manual_rotate * self.manual_rotate_speed
 
     sim.setJointTargetVelocity(self.left_motor, left_motor_vel)
     sim.setJointTargetVelocity(self.right_motor, right_motor_vel)
@@ -153,7 +152,7 @@ def sysCall_sensing():
     self.pos_error = current_pos_error
 
     message, data, data2 = sim.getSimulatorMessage()
-    vel_offset = 0.3
+    vel_offset = 0.2
     deceleration_rate = 0.001  # Rate at which to decelerate
 
     if message == sim.message_keypress:
@@ -178,17 +177,19 @@ def sysCall_sensing():
         elif data[0] == 2009:
             self.manual_rotate = 1
             if not self.stationary:
-                self.manual_rotate = 0.5
+                self.manual_rotate = 0.6
         elif data[0] == 2010:
             self.manual_rotate = -1
             if not self.stationary:
-                self.manual_rotate = -0.5
+                self.manual_rotate = -0.6
         elif data[0] == 113:
             self.stationary = True
             self.manual_rotate = 0
             # self.decelerating = True
-            self.setpoint_pos = sim.getObjectPosition(self.body, -1)
-            self.setpoint_pitch = 0
+            eulerAngles = sim.getObjectOrientation(self.body)
+            roll, yaw, pitch = eulerAngles[0], eulerAngles[2], 0
+            eulerAngles_ = sim.yawPitchRollToAlphaBetaGamma(yaw, pitch, roll)
+            sim.setObjectOrientation(self.body, -1, eulerAngles_)
 
             sim.setObjectFloatParameter(self.body, sim.shapefloatparam_init_velocity_x, 0)
             sim.setObjectFloatParameter(self.body, sim.shapefloatparam_init_velocity_y, 0)
@@ -196,16 +197,14 @@ def sysCall_sensing():
             sim.setObjectFloatParameter(self.body, sim.shapefloatparam_init_ang_velocity_x, 0)
             sim.setObjectFloatParameter(self.body, sim.shapefloatparam_init_ang_velocity_y, 0)
             sim.setObjectFloatParameter(self.body, sim.shapefloatparam_init_ang_velocity_z, 0)
-
-            eulerAngles = sim.getObjectOrientation(self.body)
-            roll, yaw, pitch = eulerAngles[0], eulerAngles[2], 0
-            eulerAngles_ = sim.yawPitchRollToAlphaBetaGamma(yaw, pitch, roll)
-            print(eulerAngles_)
-            sim.setObjectOrientation(self.body, -1, eulerAngles_)
+            self.setpoint_pos = sim.getObjectPosition(self.body, -1)
+            self.setpoint_pitch = 0
 
             self.pos_error = 0
             self.pitch_error = 0
             self.pos_gain = 0
+        elif data[0]==114:
+            print(body_pos)
 
     #   # Gradually decelerate to stop
     

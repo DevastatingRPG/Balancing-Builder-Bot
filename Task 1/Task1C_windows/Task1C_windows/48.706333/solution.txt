@@ -1,3 +1,0 @@
-We will be modifying the CycleGAN architecture to accommodate the attention layers and geospatial data embedded with the input images.
-
-Now the preprocessed dataset is passed to cycleGAN train loop, where a pair of SAR and Optical Coloured images are passed through the CycleGAN neural networks to adversarially train the 2 generators and discriminators for good sar to colorized sar generation.
