@@ -1,182 +1,109 @@
+// PID Library
 #include <PID_v1.h>
 
-// These are needed for MPU
-#include "I2Cdev.h"
-#include "MPU6050_6Axis_MotionApps20.h"
-// Arduino Wire library is required if I2Cdev I2CDEV_ARDUINO_WIRE implementation
-// is used in I2Cdev.h
+// MPU
 #if I2CDEV_IMPLEMENTATION == I2CDEV_ARDUINO_WIRE
 #include "Wire.h"
 #endif
+#include "I2Cdev.h"
+#include "MPU6050_6Axis_MotionApps20.h"
 
-// class default I2C address is 0x68
-MPU6050 mpu;
+// Bluetooth
+const int RX = A1;  // RX: Bluetooth receive pin
+const int TX = A0;  // TX: Bluetooth transmit pin
 
-#define INTERRUPT_PIN 2  // use pin 2 on Arduino Uno & most boards
+// Motor A
+const int ENA = 6;    // ENA: Enable pin for Motor A
+int motor1Pin1 = A2;  // motor1Pin1: Control pin 1 for Motor A
+int motor1Pin2 = A3;  // motor1Pin2: Control pin 2 for Motor A
+
+// Motor B
+const int ENB = 5;   // ENB: Enable pin for Motor B
+int motor2Pin1 = 4;  // motor2Pin1: Control pin 1 for Motor B
+int motor2Pin2 = 9;  // motor2Pin2: Control pin 2 for Motor B
+
+// Encoders
+const int encA1 = 2;  // encA1: Encoder 1 channel A
+const int encB1 = 7;  // encB1: Encoder 1 channel B
+const int encA2 = 3;  // encA2: Encoder 2 channel A
+const int encB2 = 8;  // encB2: Encoder 2 channel B
+
+MPU6050 mpu;  // mpu: MPU6050 sensor object
 
 // MPU control/status vars
-bool dmpReady = false;   // set true if DMP init was successful
-uint8_t mpuIntStatus;    // holds actual interrupt status byte from MPU
-uint8_t devStatus;       // return status after each device operation (0 = success, !0 = error)
-uint16_t packetSize;     // expected DMP packet size (default is 42 bytes)
-uint16_t fifoCount;      // count of all bytes currently in FIFO
-uint8_t fifoBuffer[64];  // FIFO storage buffer
+bool dmpReady = false;   // dmpReady: Flag to indicate if DMP is ready
+uint8_t mpuIntStatus;    // mpuIntStatus: Interrupt status byte from MPU
+uint8_t devStatus;       // devStatus: Return status after each device operation (0 = success, !0 = error)
+uint8_t fifoBuffer[64];  // fifoBuffer: FIFO storage buffer
 
 // orientation/motion vars
-Quaternion q;         // [w, x, y, z]         quaternion container
-VectorFloat gravity;  // [x, y, z]            gravity vector
-float ypr[3];         // [yaw, pitch, roll]   yaw/pitch/roll container and gravity vector
-VectorInt16 gy;       // [x, y, z]            gyro sensor measurements
+Quaternion q;         // q: Quaternion container [w, x, y, z]
+VectorFloat gravity;  // gravity: Gravity vector [x, y, z]
+float ypr[3];         // ypr: Yaw/Pitch/Roll container and gravity vector [yaw, pitch, roll]
+VectorInt16 gy;       // gy: Gyro sensor measurements [x, y, z]
 
-void rotateMotor(int speed1, int speed2);
+volatile bool mpuInterrupt = false;  // mpuInterrupt: Flag to indicate MPU interrupt
 
-// ================================================================
-// ===               INTERRUPT DETECTION ROUTINE                ===
-// ================================================================
+// Encoder Pulse Counts
+int wheel_pulse_count_left = 0;   // wheel_pulse_count_left: Pulse count for left wheel encoder
+int wheel_pulse_count_right = 0;  // wheel_pulse_count_right: Pulse count for right wheel encoder
 
-volatile bool mpuInterrupt = false;  // indicates whether MPU interrupt pin has gone high
-void dmpDataReady() {
-  mpuInterrupt = true;
-}
+#define PID_MIN_LIMIT -180           // PID_MIN_LIMIT: Minimum limit for PID output
+#define PID_MAX_LIMIT 180            // PID_MAX_LIMIT: Maximum limit for PID output
+#define PID_SAMPLE_TIME_IN_MILLI 10  // PID_SAMPLE_TIME_IN_MILLI: PID sample time in milliseconds
 
-#define PID_MIN_LIMIT -255           // Min limit for PID
-#define PID_MAX_LIMIT 255            // Max limit for PID
-#define PID_SAMPLE_TIME_IN_MILLI 10  // This is PID sample time in milliseconds
+#define SETPOINT_PITCH_ANGLE_OFFSET 0  // SETPOINT_PITCH_ANGLE_OFFSET: Setpoint pitch angle offset
 
-// The pitch angle given by MPU6050 when robot is vertical and MPU6050 is horizontal is 0 in ideal case.
-// However in real case its slightly off and we need add some correction to keep robot vertical.
-// This is the angle correction to keep our robot stand vertically. Sometimes robot moves in one direction so we need to adjust this.
-#define SETPOINT_PITCH_ANGLE_OFFSET 0
+#define MIN_ABSOLUTE_SPEED 0  // MIN_ABSOLUTE_SPEED: Minimum motor speed
 
-#define MIN_ABSOLUTE_SPEED 0  // Min motor speed
+double Setpoint_Pitch, Input_Pitch, Output_Pitch, Error_Pitch;  // PID variables for pitch control
+double Setpoint_Yaw, Input_Yaw, Output_Yaw;                     // PID variables for yaw control
+double Setpoint_Pos, Input_Pos, Output_Pos, Error_Pos;          // PID variables for position control
 
-double setpointPitchAngle = SETPOINT_PITCH_ANGLE_OFFSET;
-double pitchGyroAngle = 0;
-double pitchPIDOutput = 0;
+/**
+ * Struct: PIDParams
+ * Description: Structure to hold PID parameters.
+ */
+struct PIDParams {
+  float Kp;   // Kp: Proportional gain
+  float Ki;   // Ki: Integral gain
+  float Kd;   // Kd: Derivative gain
+  float _kp;  // _kp: Internal proportional gain
+  float _ki;  // _ki: Internal integral gain
+  float _kd;  // _kd: Internal derivative gain
 
-double setpointYawRate = 0;
-double yawGyroRate = 0;
-double yawPIDOutput = 0;
-
-#define PID_PITCH_KP 13
-#define PID_PITCH_KI 185
-#define PID_PITCH_KD .6
-
-#define PID_YAW_KP 0.5
-#define PID_YAW_KI 0.5
-#define PID_YAW_KD 0
-
-PID pitchPID(&pitchGyroAngle, &pitchPIDOutput, &setpointPitchAngle, PID_PITCH_KP, PID_PITCH_KI, PID_PITCH_KD, DIRECT);
-PID yawPID(&yawGyroRate, &yawPIDOutput, &setpointYawRate, PID_YAW_KP, PID_YAW_KI, PID_YAW_KD, DIRECT);
-
-int enableMotor1 = 6;
-int motor1Pin1 = A2;
-int motor1Pin2 = A3;
-
-int motor2Pin1 = 4;
-int motor2Pin2 = 9;
-int enableMotor2 = 5;
-
-void setupPID() {
-  pitchPID.SetOutputLimits(PID_MIN_LIMIT, PID_MAX_LIMIT);
-  pitchPID.SetMode(AUTOMATIC);
-  pitchPID.SetSampleTime(PID_SAMPLE_TIME_IN_MILLI);
-
-  yawPID.SetOutputLimits(PID_MIN_LIMIT, PID_MAX_LIMIT);
-  yawPID.SetMode(AUTOMATIC);
-  yawPID.SetSampleTime(PID_SAMPLE_TIME_IN_MILLI);
-}
-
-void setupMotors() {
-  pinMode(enableMotor1, OUTPUT);
-  pinMode(motor1Pin1, OUTPUT);
-  pinMode(motor1Pin2, OUTPUT);
-
-  pinMode(enableMotor2, OUTPUT);
-  pinMode(motor2Pin1, OUTPUT);
-  pinMode(motor2Pin2, OUTPUT);
-
-  rotateMotor(0, 0);
-}
-
-void setupMPU() {
-// join I2C bus (I2Cdev library doesn't do this automatically)
-#if I2CDEV_IMPLEMENTATION == I2CDEV_ARDUINO_WIRE
-  Wire.begin();
-  Wire.setClock(400000);  // 400kHz I2C clock. Comment this line if having compilation difficulties
-#elif I2CDEV_IMPLEMENTATION == I2CDEV_BUILTIN_FASTWIRE
-  Fastwire::setup(400, true);
-#endif
-
-  mpu.initialize();
-  pinMode(INTERRUPT_PIN, INPUT);
-  devStatus = mpu.dmpInitialize();
-
-  // supply your own gyro offsets here, scaled for min sensitivity
-  //           X Accel  Y Accel  Z Accel   X Gyro   Y Gyro   Z Gyro
-  // OFFSETS    -122,     111,    800,    17,      -32,      38
-  mpu.setXAccelOffset(1254);
-  mpu.setYAccelOffset(497);
-  mpu.setZAccelOffset(446);
-  mpu.setXGyroOffset(32);
-  mpu.setYGyroOffset(-80);
-  mpu.setZGyroOffset(-31);
-  // make sure it worked (returns 0 if so)
-  if (devStatus == 0) {
-    // Calibration Time: generate offsets and calibrate our MPU6050
-    // mpu.CalibrateAccel(6);
-    // mpu.CalibrateGyro(6);
-    // turn on the DMP, now that it's ready
-    mpu.setDMPEnabled(true);
-    mpuIntStatus = mpu.getIntStatus();
-    dmpReady = true;
-    // get expected DMP packet size for later comparison
-    packetSize = mpu.dmpGetFIFOPacketSize();
-  } else {
-    // ERROR!
+  /**
+   * Constructor: PIDParams
+   * Input: Kp - Proportional gain
+   *        Ki - Integral gain
+   *        Kd - Derivative gain
+   * Logic: Initializes the PID parameters and internal variables.
+   */
+  PIDParams(float Kp, float Ki, float Kd)
+      : Kp(Kp), Ki(Ki), Kd(Kd) {
+    _kp = Kp;
+    _kd = Kd;
+    _ki = Ki;
   }
-}
+};
 
-void setup() {
-  // This is to set up motors
-  setupMotors();
-  // This is to set up MPU6050 sensor
-  setupMPU();
-  // This is to set up PID
-  setupPID();
-}
+// PID parameter instances
+PIDParams pitchCon(16, 220, 0.6);   // pitchCon: PID parameters for pitch control
+PIDParams posAgg(0.012, 0, 0.001);  // posAgg: PID parameters for position control
+PIDParams yaw(0.5, 0.5, 0);         // yaw: PID parameters for yaw control
 
-void loop() {
-  // if programming failed, don't try to do anything
-  if (!dmpReady) return;
+// PID controller instances
+PID pitchPID(&Input_Pitch, &Output_Pitch, &Setpoint_Pitch, pitchCon._kp, pitchCon._ki, pitchCon._kd, DIRECT);
+PID posPID(&Input_Pos, &Output_Pos, &Setpoint_Pos, posAgg._kp, posAgg._ki, posAgg._kd, DIRECT);
+PID yawPID(&Input_Yaw, &Output_Yaw, &Setpoint_Yaw, yaw._kp, yaw._ki, yaw._kd, DIRECT);
 
-  // read a packet from FIFO. Get the Latest packet
-  if (mpu.dmpGetCurrentFIFOPacket(fifoBuffer)) {
-    mpu.dmpGetQuaternion(&q, fifoBuffer);
-    mpu.dmpGetGravity(&gravity, &q);
-    mpu.dmpGetYawPitchRoll(ypr, &q, &gravity);
-    mpu.dmpGetGyro(&gy, fifoBuffer);
-
-    yawGyroRate = gy.z;                    // rotation rate in degrees per second
-    pitchGyroAngle = ypr[2] * 180 / M_PI;  // angle in degree
-
-    pitchPID.Compute(true);
-    yawPID.Compute(true);
-
-    rotateMotor(pitchPIDOutput + yawPIDOutput, pitchPIDOutput - yawPIDOutput);
-
-#ifdef PRINT_DEBUG_BUILD
-    Serial.println("The gyro  before ");
-    Serial.println(pitchGyroAngle);
-    Serial.println("The setpoints ");
-    Serial.println(setpointPitchAngle);
-    Serial.println("The pid output ");
-    Serial.println(pitchPIDOutput);
-    delay(500);
-#endif
-  }
-}
-
+/**
+ * Function Name: rotateMotor
+ * Input: speed1 - Speed for motor 1
+ *        speed2 - Speed for motor 2
+ * Logic: Controls the direction and speed of the motors based on the input speeds.
+ * Example Call: rotateMotor(100, 100);
+ */
 void rotateMotor(int speed1, int speed2) {
   if (speed1 < 0) {
     digitalWrite(motor1Pin1, LOW);
@@ -197,9 +124,211 @@ void rotateMotor(int speed1, int speed2) {
   speed1 = abs(speed1) + MIN_ABSOLUTE_SPEED;
   speed2 = abs(speed2) + MIN_ABSOLUTE_SPEED;
 
-  speed1 = constrain(speed1, MIN_ABSOLUTE_SPEED, 255);
-  speed2 = constrain(speed2, MIN_ABSOLUTE_SPEED, 255);
+  speed1 = constrain(speed1, MIN_ABSOLUTE_SPEED, 180);
+  speed2 = constrain(speed2, MIN_ABSOLUTE_SPEED, 180);
 
-  analogWrite(enableMotor1, speed1);
-  analogWrite(enableMotor2, speed2);
+  analogWrite(ENA, speed1 * 1.1);
+  analogWrite(ENB, speed2);
+}
+
+/**
+ * Function Name: mot_rencoder_left
+ * Logic: Interrupt service routine for the left motor encoder. Updates the pulse count based on the encoder signals.
+ * Example Call: attachInterrupt(digitalPinToInterrupt(encA1), mot_rencoder_left, RISING);
+ */
+void mot_rencoder_left() {
+  if (digitalRead(encA1) > digitalRead(encB1)) {
+    wheel_pulse_count_left = wheel_pulse_count_left + 1;
+  } else {
+    wheel_pulse_count_left = wheel_pulse_count_left - 1;
+  }
+}
+
+/**
+ * Function Name: mot_rencoder_right
+ * Logic: Interrupt service routine for the right motor encoder. Updates the pulse count based on the encoder signals.
+ * Example Call: attachInterrupt(digitalPinToInterrupt(encA2), mot_rencoder_right, RISING);
+ */
+void mot_rencoder_right() {
+  if (digitalRead(encA2) > digitalRead(encB2)) {
+    wheel_pulse_count_right = wheel_pulse_count_right - 1;
+  } else {
+    wheel_pulse_count_right = wheel_pulse_count_right + 1;
+  }
+}
+
+/**
+ * Function Name: setupPID
+ * Logic: Initializes the PID controllers with the setpoints, output limits, and sample times.
+ * Example Call: setupPID();
+ */
+void setupPID() {
+  Setpoint_Pitch = SETPOINT_PITCH_ANGLE_OFFSET;
+  pitchPID.SetOutputLimits(PID_MIN_LIMIT, PID_MAX_LIMIT);
+  pitchPID.SetMode(AUTOMATIC);
+  pitchPID.SetSampleTime(PID_SAMPLE_TIME_IN_MILLI);
+
+  Setpoint_Yaw = 0;
+  yawPID.SetOutputLimits(PID_MIN_LIMIT, PID_MAX_LIMIT);
+  yawPID.SetMode(AUTOMATIC);
+  yawPID.SetSampleTime(PID_SAMPLE_TIME_IN_MILLI);
+
+  Setpoint_Pos = 0;
+  posPID.SetOutputLimits(-2, 2);
+  posPID.SetMode(AUTOMATIC);
+  posPID.SetSampleTime(PID_SAMPLE_TIME_IN_MILLI);
+}
+
+/**
+ * Function Name: setupMotors
+ * Logic: Configures the motor control pins as outputs and initializes the motors to a stopped state.
+ * Example Call: setupMotors();
+ */
+void setupMotors() {
+  // Motor A
+  pinMode(ENA, OUTPUT);
+  pinMode(motor1Pin1, OUTPUT);
+  pinMode(motor1Pin2, OUTPUT);
+
+  // Motor B
+  pinMode(ENB, OUTPUT);
+  pinMode(motor2Pin1, OUTPUT);
+  pinMode(motor2Pin2, OUTPUT);
+
+  rotateMotor(0, 0);
+}
+
+/**
+ * Function Name: setupMPU
+ * Logic: Initializes the MPU6050 sensor, sets the offsets, and enables the DMP.
+ * Example Call: setupMPU();
+ */
+void setupMPU() {
+  // join I2C bus (I2Cdev library doesn't do this automatically)
+#if I2CDEV_IMPLEMENTATION == I2CDEV_ARDUINO_WIRE
+  Wire.begin();
+  Wire.setClock(400000);  // 400kHz I2C clock. Comment this line if having compilation difficulties
+#elif I2CDEV_IMPLEMENTATION == I2CDEV_BUILTIN_FASTWIRE
+  Fastwire::setup(400, true);
+#endif
+
+  mpu.initialize();
+  devStatus = mpu.dmpInitialize();
+
+  mpu.setXAccelOffset(1254);
+  mpu.setYAccelOffset(497);
+  mpu.setZAccelOffset(446);
+  mpu.setXGyroOffset(32);
+  mpu.setYGyroOffset(-80);
+  mpu.setZGyroOffset(-31);
+
+  if (devStatus == 0) {
+    // mpu.CalibrateAccel(6);
+    // mpu.CalibrateGyro(6);
+    mpu.setDMPEnabled(true);
+    mpuIntStatus = mpu.getIntStatus();
+    dmpReady = true;
+  } else {
+    // ERROR!
+  }
+}
+
+/**
+ * Function Name: setupEncoders
+ * Logic: Configures the encoder pins as inputs with pull-up resistors and attaches interrupt service routines.
+ * Example Call: setupEncoders();
+ */
+void setupEncoders() {
+  // Encoder 1
+  pinMode(encA1, INPUT_PULLUP);
+  digitalWrite(encA1, HIGH);
+  attachInterrupt(digitalPinToInterrupt(encA1), mot_rencoder_left, RISING);
+
+  pinMode(encB1, INPUT_PULLUP);
+  digitalWrite(encB1, HIGH);
+
+  // Encoder 2
+  pinMode(encA2, INPUT_PULLUP);
+  digitalWrite(encA2, HIGH);
+  attachInterrupt(digitalPinToInterrupt(encA2), mot_rencoder_right, RISING);
+
+  pinMode(encB2, INPUT_PULLUP);
+  digitalWrite(encB2, HIGH);
+}
+
+/**
+ * Function Name: setup
+ * Logic: Calls the setup functions for motors, MPU6050, PID controllers, and encoders.
+ * Example Call: setup();
+ */
+void setup() {
+  // Motor Setup
+  setupMotors();
+  // MPU6050 Setup
+  setupMPU();
+  // PID Setup
+  setupPID();
+  // Encoder Setup
+  setupEncoders();
+}
+
+bool stopping = false;  // stopping: Flag to indicate if the robot is stopping
+
+/**
+ * Function Name: loop
+ * Logic: Main loop function that reads sensor data, computes PID outputs, and controls the motors.
+ * Example Call: loop();
+ */
+void loop() {
+  if (!dmpReady) {
+    return;
+  }
+
+  float vel = 0;  // vel: Velocity for motor control
+  Error_Pos = (wheel_pulse_count_left + wheel_pulse_count_right) / 2;
+
+  // Only apply Position PID if Error is high to avoid overreaction
+  if (abs(Error_Pos) > 10) {
+    Input_Pos = Error_Pos;
+    posPID.Compute(true);
+    Setpoint_Pitch = -Output_Pos;
+    stopping = true;
+    pitchPID.SetTunings(pitchCon._kp, pitchCon.Ki, pitchCon._kd);
+  } else {
+    Setpoint_Pitch = 0;
+    stopping = false;
+  }
+
+  // read a packet from FIFO. Get the Latest packet
+  if (mpu.dmpGetCurrentFIFOPacket(fifoBuffer)) {
+    mpu.dmpGetQuaternion(&q, fifoBuffer);
+    mpu.dmpGetGravity(&gravity, &q);
+    mpu.dmpGetYawPitchRoll(ypr, &q, &gravity);
+    mpu.dmpGetGyro(&gy, fifoBuffer);
+
+    Input_Yaw = gy.z;                   // rotation rate in degrees per second
+    Input_Pitch = ypr[2] * 180 / M_PI;  // angle in degree
+
+    pitchPID.Compute(true);
+    yawPID.Compute(true);
+
+    vel += Output_Pitch;
+
+#ifdef PRINT_DEBUG_BUILD
+    Serial.println("The gyro  before ");
+    Serial.println(pitchGyroAngle);
+    Serial.println("The setpoints ");
+    Serial.println(setpointPitchAngle);
+    Serial.println("The pid output ");
+    Serial.println(pitchPIDOutput);
+    delay(500);
+#endif
+  }
+
+  // Reduce vel if position PID is applicable
+  if (stopping) {
+    vel *= 0.8;
+  }
+
+  rotateMotor(vel, vel);
 }
