@@ -66,27 +66,27 @@ double Setpoint_Pos, Input_Pos, Output_Pos, Error_Pos;         // PID variables 
  */
 struct PIDParams
 {
-    float Kp;  // Kp: Proportional gain
-    float Ki;  // Ki: Integral gain
-    float Kd;  // Kd: Derivative gain
-    float _kp; // _kp: Internal proportional gain
-    float _ki; // _ki: Internal integral gain
-    float _kd; // _kd: Internal derivative gain
+  float Kp;  // Kp: Proportional gain
+  float Ki;  // Ki: Integral gain
+  float Kd;  // Kd: Derivative gain
+  float _kp; // _kp: Internal proportional gain
+  float _ki; // _ki: Internal integral gain
+  float _kd; // _kd: Internal derivative gain
 
-    /**
-     * Constructor: PIDParams
-     * Input: Kp - Proportional gain
-     *        Ki - Integral gain
-     *        Kd - Derivative gain
-     * Logic: Initializes the PID parameters and internal variables.
-     */
-    PIDParams(float Kp, float Ki, float Kd)
-        : Kp(Kp), Ki(Ki), Kd(Kd)
-    {
-        _kp = Kp;
-        _kd = Kd;
-        _ki = Ki;
-    }
+  /**
+   * Constructor: PIDParams
+   * Input: Kp - Proportional gain
+   *        Ki - Integral gain
+   *        Kd - Derivative gain
+   * Logic: Initializes the PID parameters and internal variables.
+   */
+  PIDParams(float Kp, float Ki, float Kd)
+      : Kp(Kp), Ki(Ki), Kd(Kd)
+  {
+    _kp = Kp;
+    _kd = Kd;
+    _ki = Ki;
+  }
 };
 
 // PID parameter instances
@@ -108,36 +108,36 @@ PID yawPID(&Input_Yaw, &Output_Yaw, &Setpoint_Yaw, yaw._kp, yaw._ki, yaw._kd, DI
  */
 void rotateMotor(int speed1, int speed2)
 {
-    if (speed1 < 0)
-    {
-        digitalWrite(motor1Pin1, LOW);
-        digitalWrite(motor1Pin2, HIGH);
-    }
-    else if (speed1 >= 0)
-    {
-        digitalWrite(motor1Pin1, HIGH);
-        digitalWrite(motor1Pin2, LOW);
-    }
+  if (speed1 < 0)
+  {
+    digitalWrite(motor1Pin1, LOW);
+    digitalWrite(motor1Pin2, HIGH);
+  }
+  else if (speed1 >= 0)
+  {
+    digitalWrite(motor1Pin1, HIGH);
+    digitalWrite(motor1Pin2, LOW);
+  }
 
-    if (speed2 < 0)
-    {
-        digitalWrite(motor2Pin1, LOW);
-        digitalWrite(motor2Pin2, HIGH);
-    }
-    else if (speed2 >= 0)
-    {
-        digitalWrite(motor2Pin1, HIGH);
-        digitalWrite(motor2Pin2, LOW);
-    }
+  if (speed2 < 0)
+  {
+    digitalWrite(motor2Pin1, LOW);
+    digitalWrite(motor2Pin2, HIGH);
+  }
+  else if (speed2 >= 0)
+  {
+    digitalWrite(motor2Pin1, HIGH);
+    digitalWrite(motor2Pin2, LOW);
+  }
 
-    speed1 = abs(speed1) + MIN_ABSOLUTE_SPEED;
-    speed2 = abs(speed2) + MIN_ABSOLUTE_SPEED;
+  speed1 = abs(speed1) + MIN_ABSOLUTE_SPEED;
+  speed2 = abs(speed2) + MIN_ABSOLUTE_SPEED;
 
-    speed1 = constrain(speed1, MIN_ABSOLUTE_SPEED, 180);
-    speed2 = constrain(speed2, MIN_ABSOLUTE_SPEED, 180);
+  speed1 = constrain(speed1, MIN_ABSOLUTE_SPEED, 180);
+  speed2 = constrain(speed2, MIN_ABSOLUTE_SPEED, 180);
 
-    analogWrite(ENA, speed1 * 1.1);
-    analogWrite(ENB, speed2);
+  analogWrite(ENA, speed1 * 1.1);
+  analogWrite(ENB, speed2);
 }
 
 /**
@@ -147,14 +147,14 @@ void rotateMotor(int speed1, int speed2)
  */
 void mot_rencoder_left()
 {
-    if (digitalRead(encA1) > digitalRead(encB1))
-    {
-        wheel_pulse_count_left = wheel_pulse_count_left + 1;
-    }
-    else
-    {
-        wheel_pulse_count_left = wheel_pulse_count_left - 1;
-    }
+  if (digitalRead(encA1) > digitalRead(encB1))
+  {
+    wheel_pulse_count_left = wheel_pulse_count_left + 1;
+  }
+  else
+  {
+    wheel_pulse_count_left = wheel_pulse_count_left - 1;
+  }
 }
 
 /**
@@ -164,14 +164,14 @@ void mot_rencoder_left()
  */
 void mot_rencoder_right()
 {
-    if (digitalRead(encA2) > digitalRead(encB2))
-    {
-        wheel_pulse_count_right = wheel_pulse_count_right - 1;
-    }
-    else
-    {
-        wheel_pulse_count_right = wheel_pulse_count_right + 1;
-    }
+  if (digitalRead(encA2) > digitalRead(encB2))
+  {
+    wheel_pulse_count_right = wheel_pulse_count_right - 1;
+  }
+  else
+  {
+    wheel_pulse_count_right = wheel_pulse_count_right + 1;
+  }
 }
 
 /**
@@ -181,20 +181,20 @@ void mot_rencoder_right()
  */
 void setupPID()
 {
-    Setpoint_Pitch = SETPOINT_PITCH_ANGLE_OFFSET;
-    pitchPID.SetOutputLimits(PID_MIN_LIMIT, PID_MAX_LIMIT);
-    pitchPID.SetMode(AUTOMATIC);
-    pitchPID.SetSampleTime(PID_SAMPLE_TIME_IN_MILLI);
+  Setpoint_Pitch = SETPOINT_PITCH_ANGLE_OFFSET;
+  pitchPID.SetOutputLimits(PID_MIN_LIMIT, PID_MAX_LIMIT);
+  pitchPID.SetMode(AUTOMATIC);
+  pitchPID.SetSampleTime(PID_SAMPLE_TIME_IN_MILLI);
 
-    Setpoint_Yaw = 0;
-    yawPID.SetOutputLimits(PID_MIN_LIMIT, PID_MAX_LIMIT);
-    yawPID.SetMode(AUTOMATIC);
-    yawPID.SetSampleTime(PID_SAMPLE_TIME_IN_MILLI);
+  Setpoint_Yaw = 0;
+  yawPID.SetOutputLimits(PID_MIN_LIMIT, PID_MAX_LIMIT);
+  yawPID.SetMode(AUTOMATIC);
+  yawPID.SetSampleTime(PID_SAMPLE_TIME_IN_MILLI);
 
-    Setpoint_Pos = 0;
-    posPID.SetOutputLimits(-2, 2);
-    posPID.SetMode(AUTOMATIC);
-    posPID.SetSampleTime(PID_SAMPLE_TIME_IN_MILLI);
+  Setpoint_Pos = 0;
+  posPID.SetOutputLimits(-2, 2);
+  posPID.SetMode(AUTOMATIC);
+  posPID.SetSampleTime(PID_SAMPLE_TIME_IN_MILLI);
 }
 
 /**
@@ -204,17 +204,17 @@ void setupPID()
  */
 void setupMotors()
 {
-    // Motor A
-    pinMode(ENA, OUTPUT);
-    pinMode(motor1Pin1, OUTPUT);
-    pinMode(motor1Pin2, OUTPUT);
+  // Motor A
+  pinMode(ENA, OUTPUT);
+  pinMode(motor1Pin1, OUTPUT);
+  pinMode(motor1Pin2, OUTPUT);
 
-    // Motor B
-    pinMode(ENB, OUTPUT);
-    pinMode(motor2Pin1, OUTPUT);
-    pinMode(motor2Pin2, OUTPUT);
+  // Motor B
+  pinMode(ENB, OUTPUT);
+  pinMode(motor2Pin1, OUTPUT);
+  pinMode(motor2Pin2, OUTPUT);
 
-    rotateMotor(0, 0);
+  rotateMotor(0, 0);
 }
 
 /**
@@ -224,36 +224,36 @@ void setupMotors()
  */
 void setupMPU()
 {
-    // join I2C bus (I2Cdev library doesn't do this automatically)
+  // join I2C bus (I2Cdev library doesn't do this automatically)
 #if I2CDEV_IMPLEMENTATION == I2CDEV_ARDUINO_WIRE
-    Wire.begin();
-    Wire.setClock(400000); // 400kHz I2C clock. Comment this line if having compilation difficulties
+  Wire.begin();
+  Wire.setClock(400000); // 400kHz I2C clock. Comment this line if having compilation difficulties
 #elif I2CDEV_IMPLEMENTATION == I2CDEV_BUILTIN_FASTWIRE
-    Fastwire::setup(400, true);
+  Fastwire::setup(400, true);
 #endif
 
-    mpu.initialize();
-    devStatus = mpu.dmpInitialize();
+  mpu.initialize();
+  devStatus = mpu.dmpInitialize();
 
-    mpu.setXAccelOffset(1254);
-    mpu.setYAccelOffset(497);
-    mpu.setZAccelOffset(446);
-    mpu.setXGyroOffset(32);
-    mpu.setYGyroOffset(-80);
-    mpu.setZGyroOffset(-31);
+  mpu.setXAccelOffset(1254);
+  mpu.setYAccelOffset(497);
+  mpu.setZAccelOffset(446);
+  mpu.setXGyroOffset(32);
+  mpu.setYGyroOffset(-80);
+  mpu.setZGyroOffset(-31);
 
-    if (devStatus == 0)
-    {
-        // mpu.CalibrateAccel(6);
-        // mpu.CalibrateGyro(6);
-        mpu.setDMPEnabled(true);
-        mpuIntStatus = mpu.getIntStatus();
-        dmpReady = true;
-    }
-    else
-    {
-        // ERROR!
-    }
+  if (devStatus == 0)
+  {
+    // mpu.CalibrateAccel(6);
+    // mpu.CalibrateGyro(6);
+    mpu.setDMPEnabled(true);
+    mpuIntStatus = mpu.getIntStatus();
+    dmpReady = true;
+  }
+  else
+  {
+    // ERROR!
+  }
 }
 
 /**
@@ -263,21 +263,21 @@ void setupMPU()
  */
 void setupEncoders()
 {
-    // Encoder 1
-    pinMode(encA1, INPUT_PULLUP);
-    digitalWrite(encA1, HIGH);
-    attachInterrupt(digitalPinToInterrupt(encA1), mot_rencoder_left, RISING);
+  // Encoder 1
+  pinMode(encA1, INPUT_PULLUP);
+  digitalWrite(encA1, HIGH);
+  attachInterrupt(digitalPinToInterrupt(encA1), mot_rencoder_left, RISING);
 
-    pinMode(encB1, INPUT_PULLUP);
-    digitalWrite(encB1, HIGH);
+  pinMode(encB1, INPUT_PULLUP);
+  digitalWrite(encB1, HIGH);
 
-    // Encoder 2
-    pinMode(encA2, INPUT_PULLUP);
-    digitalWrite(encA2, HIGH);
-    attachInterrupt(digitalPinToInterrupt(encA2), mot_rencoder_right, RISING);
+  // Encoder 2
+  pinMode(encA2, INPUT_PULLUP);
+  digitalWrite(encA2, HIGH);
+  attachInterrupt(digitalPinToInterrupt(encA2), mot_rencoder_right, RISING);
 
-    pinMode(encB2, INPUT_PULLUP);
-    digitalWrite(encB2, HIGH);
+  pinMode(encB2, INPUT_PULLUP);
+  digitalWrite(encB2, HIGH);
 }
 
 /**
@@ -287,14 +287,14 @@ void setupEncoders()
  */
 void setup()
 {
-    // Motor Setup
-    setupMotors();
-    // MPU6050 Setup
-    setupMPU();
-    // PID Setup
-    setupPID();
-    // Encoder Setup
-    setupEncoders();
+  // Motor Setup
+  setupMotors();
+  // MPU6050 Setup
+  setupMPU();
+  // PID Setup
+  setupPID();
+  // Encoder Setup
+  setupEncoders();
 }
 
 bool stopping = false; // stopping: Flag to indicate if the robot is stopping
@@ -306,61 +306,61 @@ bool stopping = false; // stopping: Flag to indicate if the robot is stopping
  */
 void loop()
 {
-    if (!dmpReady)
-    {
-        return;
-    }
+  if (!dmpReady)
+  {
+    return;
+  }
 
-    float vel = 0; // vel: Velocity for motor control
-    Error_Pos = (wheel_pulse_count_left + wheel_pulse_count_right) / 2;
+  float vel = 0; // vel: Velocity for motor control
+  Error_Pos = (wheel_pulse_count_left + wheel_pulse_count_right) / 2;
 
-    // Only apply Position PID if Error is high to avoid overreaction
-    if (abs(Error_Pos) > 10)
-    {
-        Input_Pos = Error_Pos;
-        posPID.Compute(true);
-        Setpoint_Pitch = -Output_Pos;
-        stopping = true;
-        pitchPID.SetTunings(pitchCon._kp, pitchCon.Ki, pitchCon._kd);
-    }
-    else
-    {
-        Setpoint_Pitch = 0;
-        stopping = false;
-    }
+  // Only apply Position PID if Error is high to avoid overreaction
+  if (abs(Error_Pos) > 10)
+  {
+    Input_Pos = Error_Pos;
+    posPID.Compute(true);
+    Setpoint_Pitch = -Output_Pos;
+    stopping = true;
+    pitchPID.SetTunings(pitchCon._kp, pitchCon.Ki, pitchCon._kd);
+  }
+  else
+  {
+    Setpoint_Pitch = 0;
+    stopping = false;
+  }
 
-    // read a packet from FIFO. Get the Latest packet
-    if (mpu.dmpGetCurrentFIFOPacket(fifoBuffer))
-    {
-        mpu.dmpGetQuaternion(&q, fifoBuffer);
-        mpu.dmpGetGravity(&gravity, &q);
-        mpu.dmpGetYawPitchRoll(ypr, &q, &gravity);
-        mpu.dmpGetGyro(&gy, fifoBuffer);
+  // read a packet from FIFO. Get the Latest packet
+  if (mpu.dmpGetCurrentFIFOPacket(fifoBuffer))
+  {
+    mpu.dmpGetQuaternion(&q, fifoBuffer);
+    mpu.dmpGetGravity(&gravity, &q);
+    mpu.dmpGetYawPitchRoll(ypr, &q, &gravity);
+    mpu.dmpGetGyro(&gy, fifoBuffer);
 
-        Input_Yaw = gy.z;                  // rotation rate in degrees per second
-        Input_Pitch = ypr[2] * 180 / M_PI; // angle in degree
+    Input_Yaw = gy.z;                  // rotation rate in degrees per second
+    Input_Pitch = ypr[2] * 180 / M_PI; // angle in degree
 
-        pitchPID.Compute(true);
-        yawPID.Compute(true);
+    pitchPID.Compute(true);
+    yawPID.Compute(true);
 
-        vel += Output_Pitch;
+    vel += Output_Pitch;
 
 #ifdef PRINT_DEBUG_BUILD
-        Serial.println("The gyro  before ");
-        Serial.println(pitchGyroAngle);
-        Serial.println("The setpoints ");
-        Serial.println(setpointPitchAngle);
-        Serial.println("The pid output ");
-        Serial.println(pitchPIDOutput);
-        delay(500);
+    Serial.println("The gyro  before ");
+    Serial.println(pitchGyroAngle);
+    Serial.println("The setpoints ");
+    Serial.println(setpointPitchAngle);
+    Serial.println("The pid output ");
+    Serial.println(pitchPIDOutput);
+    delay(500);
 #endif
-    }
+  }
 
-    // Reduce vel if position PID is applicable
-    if (stopping)
-    {
-        vel *= 0.8;
-    }
+  // Reduce vel if position PID is applicable
+  if (stopping)
+  {
+    vel *= 0.8;
+  }
 
-    rotateMotor(vel, vel);
+  rotateMotor(vel, vel);
 }
