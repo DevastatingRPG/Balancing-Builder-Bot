@@ -15,8 +15,8 @@
 SoftwareSerial bluetooth(A1, A0); // RX, TX
 
 // Create Servo objects
-Servo servo1;
-Servo servo2;
+Servo servo1; // Claw
+Servo servo2; // Up down Arm
 
 // Bluetooth
 const int RX = A1; // RX: Bluetooth receive pin
@@ -41,7 +41,7 @@ const int encB2 = 8; // encB2: Encoder 2 channel B
 MPU6050 mpu; // mpu: MPU6050 sensor object
 
 // MPU control/status vars
-bool dmpReady = false;  // dmpReady: Flag to indicate if DMP is ready
+bool dmpReady = false;  // dmpReady: pickup_phase to indicate if DMP is ready
 uint8_t mpuIntStatus;   // mpuIntStatus: Interrupt status byte from MPU
 uint8_t devStatus;      // devStatus: Return status after each device operation (0 = success, !0 = error)
 uint8_t fifoBuffer[64]; // fifoBuffer: FIFO storage buffer
@@ -52,7 +52,7 @@ VectorFloat gravity; // gravity: Gravity vector [x, y, z]
 float ypr[3];        // ypr: Yaw/Pitch/Roll container and gravity vector [yaw, pitch, roll]
 VectorInt16 gy;      // gy: Gyro sensor measurements [x, y, z]
 
-volatile bool mpuInterrupt = false; // mpuInterrupt: Flag to indicate MPU interrupt
+volatile bool mpuInterrupt = false; // mpuInterrupt: pickup_phase to indicate MPU interrupt
 
 // Encoder Pulse Counts
 int wheel_pulse_count_left = 0;  // wheel_pulse_count_left: Pulse count for left wheel encoder
@@ -69,7 +69,9 @@ int wheel_pulse_count_right = 0; // wheel_pulse_count_right: Pulse count for rig
 
 double Setpoint_Pitch, Input_Pitch, Output_Pitch, Error_Pitch; // PID variables for pitch control
 double Setpoint_Pos, Input_Pos, Output_Pos, Error_Pos;         // PID variables for position control
+double Setpoint_Yaw, Input_Yaw, Output_Yaw;                    // PID variables for angle control
 
+int rated = 10000;
 /**
  * Struct: PIDParams
  * Description: Structure to hold PID parameters.
@@ -100,14 +102,17 @@ struct PIDParams
 };
 
 // PID parameter instances
+// PID parameter instances
 PIDParams pitchAfterTurn(32, 300, 3);
-PIDParams pitchCon(37, 300, 3);    // pitchCon: PID parameters for pitch control
+PIDParams pitchCon(35, 350, 3.1);  // pitchCon: PID parameters for pitch control
 PIDParams posAgg(0.005, 0, 0.003); // posAgg: PID parameters for position control
-PIDParams posMove(0.01, 0, 0.003); // posAgg: PID parameters for position control
+PIDParams posMove(0.01, 0, 0.003); // posA  ``````````````````````````gg: PID parameters for position control
+PIDParams yaw(8, 100, 0.01);       // yawing angle
 
 // PID controller instances
 PID pitchPID(&Input_Pitch, &Output_Pitch, &Setpoint_Pitch, pitchCon._kp, pitchCon._ki, pitchCon._kd, DIRECT);
 PID posPID(&Input_Pos, &Output_Pos, &Setpoint_Pos, posAgg._kp, posAgg._ki, posAgg._kd, DIRECT);
+PID yawPID(&Input_Yaw, &Output_Yaw, &Setpoint_Yaw, yaw._kp, yaw._ki, yaw._kd, DIRECT);
 
 unsigned long timer = millis();
 
@@ -148,7 +153,7 @@ void rotateMotor(int speed1, int speed2, int turning = 0)
   speed1 = constrain(speed1, MIN_ABSOLUTE_SPEED, 180);
   speed2 = constrain(speed2, MIN_ABSOLUTE_SPEED, 180);
 
-  analogWrite(ENA, speed1 * 0.94);
+  analogWrite(ENA, speed1);
   analogWrite(ENB, speed2);
 }
 
@@ -202,6 +207,11 @@ void setupPID()
   posPID.SetOutputLimits(-3, 3);
   posPID.SetMode(AUTOMATIC);
   posPID.SetSampleTime(PID_SAMPLE_TIME_IN_MILLI);
+
+  Setpoint_Yaw = 0;
+  yawPID.SetOutputLimits(-100, 100);
+  yawPID.SetMode(AUTOMATIC);
+  yawPID.SetSampleTime(PID_SAMPLE_TIME_IN_MILLI);
 }
 
 /**
@@ -229,8 +239,8 @@ void setupManipulator()
   // Attach the servos to the respective pins
   servo1.attach(10);
   servo2.attach(11);
-  servo1.write(0);
-  servo2.write(45);
+  servo1.write(180);
+  servo2.write(0);
 }
 
 /**
@@ -321,13 +331,21 @@ void setup()
   // tone(12, 1000, 100);
 }
 
-bool stopping = false; // stopping: Flag to indicate if the robot is stopping
+bool stopping = false; // stopping: pickup_phase to indicate if the robot is stopping
 bool moving = false;
 int boost = 0;
-float turning = 0;
+int turning = 0;
+bool gradualStop = false;
 
-int targetPosition1 = -1;
-int targetPosition2 = 45;
+unsigned long moveStartTime = 0;
+unsigned long lastResetTime = 0;
+bool inResetPhase = false;
+float originalPitch = 0;
+const unsigned long RESET_INTERVAL = 2000; // 2000 milliseconds
+const unsigned long RESET_DURATION = 500;  // 300 milliseconds
+
+int targetPosition1 = 180;
+int targetPosition2 = 10;
 unsigned long lastServoMoveTime = 0;
 const int servoStepDelay = 20;
 
@@ -348,12 +366,10 @@ void moveServo()
       if (currentPosition < targetPosition1)
       {
         servo1.write(min(currentPosition + 5, targetPosition1));
-        // servo1.write(currentPosition + 1);
       }
       else if (currentPosition > targetPosition1)
       {
         servo1.write(max(currentPosition - 5, targetPosition1));
-        // servo1.write(currentPosition - 1);
       }
       if (currentPosition == targetPosition1)
       {
@@ -381,6 +397,39 @@ void moveServo()
   }
 }
 
+int pickup_phase = 0;
+int drop_phase = 0;
+int turn_phase = 0;
+float pitch_offset = 0.75;
+
+void safety()
+{
+  Input_Pitch = ypr[1] * 180 / M_PI; // angle in degree
+  float rate = 0;
+  float lastPitch = 0;
+  float currPitch = Input_Pitch;
+
+  unsigned long lastTime = 0;
+  unsigned long currTime = millis();
+
+  if (currTime - lastTime >= 500)
+  {
+    rate = abs(currPitch - lastPitch);
+    if (rate > rated)
+    {
+      Setpoint_Pos = 0;
+      moving = false; // Stop
+      wheel_pulse_count_left = 0;
+      wheel_pulse_count_right = 0;
+      turning = 0;
+      stopping = false;
+      boost = 0;
+    }
+    lastTime = currTime;
+    lastPitch = currPitch;
+  }
+}
+
 void loop()
 {
   if (!dmpReady)
@@ -393,13 +442,6 @@ void loop()
   if (bluetooth.available() > 0)
   {
     uint8_t btData = bluetooth.read();
-    // Serial.print("Received from Bluetooth: ");
-    // Serial.println(btData);
-    // if (bluetooth.isListening())
-    //   Serial.println("portOne is listening!");
-    // if (bluetooth.overflow())
-    //   Serial.println("portOne overflow!");
-
     switch (btData)
     {
     case 0: // Boost Forward
@@ -408,14 +450,20 @@ void loop()
       wheel_pulse_count_right = 0;
       // tone(12, 1000, 100);
       turning = 0;
+      rated = 500;
       stopping = false;
       bluetooth.flush();
       boost = 1;
       break;
     case 1: // Forward
+      // Setpoint_Pitch = -pitch_offset;
       Setpoint_Pos = 300;
       stopping = false;
-
+      moving = true;
+      rated = 500;
+      moveStartTime = millis();
+      lastResetTime = millis();
+      originalPitch = -pitch_offset;
       wheel_pulse_count_left = 0;
       wheel_pulse_count_right = 0;
       // tone(12, 1000, 100);
@@ -426,10 +474,15 @@ void loop()
       break;
 
     case 4:
-      Setpoint_Pos = -300; // Backward
-      wheel_pulse_count_left = 0;
+      Setpoint_Pos = -300;
+      // Setpoint_Pitch = pitch_offset;
       stopping = false;
-
+      moving = true;
+      rated = 500;
+      moveStartTime = millis();
+      lastResetTime = millis();
+      originalPitch = pitch_offset;
+      wheel_pulse_count_left = 0;
       wheel_pulse_count_right = 0;
       // tone(12, 1000, 100);
       turning = 0;
@@ -439,7 +492,7 @@ void loop()
       break;
     case 10:
       Setpoint_Pos = -500;
-
+      rated = 500;
       wheel_pulse_count_left = 0;
       stopping = false;
 
@@ -453,13 +506,14 @@ void loop()
 
     case 2:
 
-      moving = true;
-      wheel_pulse_count_left = 0;
-      wheel_pulse_count_right = 0;
+      // moving = true;
+      // wheel_pulse_count_left = 0;
+      // wheel_pulse_count_right = 0;
       stopping = false;
-
+      rated = 200;
       // tone(12, 1000, 100);
       turning = 1; // Rotate left
+      turn_phase = 1;
       turnStart = millis();
       bluetooth.flush();
       boost = 0;
@@ -468,11 +522,13 @@ void loop()
 
     case 3:
 
-      moving = true;
-      wheel_pulse_count_left = 0;
-      wheel_pulse_count_right = 0;
+      // moving = true;
+      // wheel_pulse_count_left = 0;
+      // wheel_pulse_count_right = 0;
       // tone(12, 1000, 100);
+      rated = 200;
       rightturn = 1;
+      turn_phase = 1;
       turning = -1; // Rotate right
       turnStart = millis();
       bluetooth.flush();
@@ -482,7 +538,6 @@ void loop()
       break;
 
     case 9:
-
       Setpoint_Pos = 0;
       moving = false; // Stop
       wheel_pulse_count_left = 0;
@@ -490,32 +545,38 @@ void loop()
       turning = 0;
       // tone(12, 1000, 100);
       stopping = false;
+      inResetPhase = false;
 
       bluetooth.flush();
       boost = 0;
 
       break;
 
-    case 6:
-      targetPosition1 = 0;
+    case 6: // arm open
+      pickup_phase = 1;
+      targetPosition1 = 90;
+      targetPosition2 = 50;
       // tone(12, 1000, 100);
       bluetooth.flush();
       break;
 
-    case 5:
-      targetPosition1 = 180;
+    case 5: // arm close
+      // targetPosition1 = 180;
+      targetPosition2 = 50;
+      drop_phase = 1;
+
       // tone(12, 1000, 100);
       bluetooth.flush();
       break;
 
     case 8:
-      targetPosition2 = 0;
+      targetPosition2 = 50; // Arm down
       // tone(12, 1000, 100);
       bluetooth.flush();
       break;
 
-    case 7:
-      targetPosition2 = 45;
+    case 7: // Arm up
+      targetPosition2 = 0;
       // tone(12, 1000, 100);
       bluetooth.flush();
       break;
@@ -528,7 +589,7 @@ void loop()
       boost = 0;
       // tone(12, 1000, 100);
       break;
-    case 13:
+    case 13: // Buzzer
       tone(12, 1000, 1000);
 
     case 14: // Slow Forward
@@ -557,14 +618,72 @@ void loop()
 
       break;
 
+    case 16: // Gradually bring Setpoint_Pitch back to 0
+      tone(12, 1000, 100);
+      Setpoint_Pos = 0;
+      wheel_pulse_count_left = 0;
+      wheel_pulse_count_right = 0;
+      boost = 0;
+      inResetPhase = false;
+      moving = false;
+      turning = false;
+
+      bluetooth.flush();
+      break;
+
     default:
       break;
     }
 
     // bluetooth.println(btData);
   }
+
   moveServo();
 
+  switch (pickup_phase)
+  {
+  case 1:
+    if (servo2.read() == 50)
+    {
+      targetPosition1 = 180;
+      pickup_phase = 2;
+    }
+    break;
+
+  case 2:
+    if (servo1.read() == 180)
+    {
+      targetPosition2 = 10;
+      pickup_phase = 0;
+    }
+    break;
+
+  default:
+    break;
+  }
+
+  switch (drop_phase)
+  {
+  case 1:
+    if (servo2.read() == 50)
+    {
+      targetPosition1 = 90;
+      drop_phase = 2;
+    }
+    break;
+  case 2:
+    if (servo1.read() == 90)
+    {
+      targetPosition2 = 10;
+      targetPosition1 = 180;
+      drop_phase = 0;
+    }
+    break;
+  default:
+    break;
+  }
+
+  // More stable when stop
   if (Setpoint_Pos == 0)
   {
     posPID.SetTunings(posAgg._kp, posAgg._ki, posAgg._kd);
@@ -584,13 +703,12 @@ void loop()
   }
   else
   {
-    if (abs(Error_Pos) > 20)
+    if (abs(Error_Pos - Setpoint_Pos) > 20)
     {
       Input_Pos = Error_Pos;
       posPID.Compute(true);
       Setpoint_Pitch = -Output_Pos + SETPOINT_PITCH_ANGLE_OFFSET;
       stopping = true;
-      pitchPID.SetTunings(pitchCon._kp, pitchCon.Ki, pitchCon._kd);
     }
     else
     {
@@ -611,15 +729,6 @@ void loop()
     vel += Output_Pitch;
   }
 
-  // Cancel turn if going to fall
-  // if ((turning == 1 && abs(Input_Pitch) > 4) || (turning == -1 && abs(Input_Pitch) > 4)) {
-  //   turning = 0;
-  //   Setpoint_Pos = 0;
-  //   wheel_pulse_count_left = 0;
-  //   wheel_pulse_count_right = 0;
-  //   pitchPID.SetTunings(pitchCon._kp, pitchCon.Ki, pitchCon._kd);
-  // }
-
   // Reduce vel if position PID is applicable
   if (stopping)
   {
@@ -639,51 +748,46 @@ void loop()
     break;
   }
 
-  if (turning && abs(vel) < 80)
+  switch (turn_phase)
   {
-    vel = (vel / abs(vel)) * 100;
-  }
-  if (turning)
-  {
-    if ((millis() - turnStart) < 10)
+  case 1:
+    if ((millis() - turnStart) < 15)
     {
-      rotateMotor(turning * abs(vel) * 0.8, (-turning) * abs(vel) * 0.8);
+      rotateMotor(turning * 150, -turning * 150);
     }
-    else if (rightturn && (millis() - turnStart) < 10)
-    {
-#define SETPOINT_PITCH_ANGLE_OFFSET 0.666;
-      rotateMotor(turning * abs(vel) * 0.8, (-turning) * abs(vel) * 0.8);
-    }
-    // End turn after duration is over
     else
     {
-      turning = 0;
-      wheel_pulse_count_left = 0;
-      wheel_pulse_count_right = 0;
-      Setpoint_Pos = 0;
-#define SETPOINT_PITCH_ANGLE_OFFSET 0;
-      Setpoint_Pitch = SETPOINT_PITCH_ANGLE_OFFSET;
-      turnEnd = millis();
-
-      pitchPID.SetTunings(pitchCon._kp, pitchCon.Ki, pitchCon._kd);
-      delay(50);
+      turn_phase = 2;
     }
-  }
-  // Apply different PID to turn end
-  else if (millis() - turnEnd < 100)
-  {
-    pitchPID.SetTunings(pitchAfterTurn._kp, pitchAfterTurn._ki, pitchAfterTurn._kd);
+    break;
+  case 2:
     turning = 0;
+    turn_phase = 3;
     wheel_pulse_count_left = 0;
     wheel_pulse_count_right = 0;
     Setpoint_Pos = 0;
     Setpoint_Pitch = SETPOINT_PITCH_ANGLE_OFFSET;
-    rotateMotor(vel, vel, turning);
-  }
-  else
-  {
-    rotateMotor(vel, vel, turning);
+    turnEnd = millis();
+
+    pitchPID.SetTunings(pitchCon._kp, pitchCon.Ki, pitchCon._kd);
+    delay(50);
+    rotateMotor(vel * 1.2, vel * 1.2, turning);
+    break;
+
+  case 3:
+    if (millis() - turnEnd > 100)
+    {
+      pitchPID.SetTunings(pitchAfterTurn._kp, pitchAfterTurn._ki, pitchAfterTurn._kd);
+      turn_phase = 0;
+    }
+    rotateMotor(vel * 1.2, vel * 1.2, turning);
+    break;
+
+  default:
+    rotateMotor(vel * 1.2, vel * 1.2, turning);
+    break;
   }
 
+  safety();
   delay(7);
 }
