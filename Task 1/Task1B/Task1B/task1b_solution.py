@@ -47,6 +47,9 @@ def sysCall_init():
 
     self.tame = 0
 
+    self.manual_rotate = 0
+    self.manual_rotate_speed = 5
+
     self.dt = sim.getSimulationTimeStep()
 
 
