@@ -100,12 +100,10 @@ struct PIDParams {
 
 // PID parameter instances
 PIDParams pitchAfterTurn(58, 500, 3.5);
-PIDParams pitchCon(33, 300, 2.4);  // pitchCon: PID parameters for pitch control
+PIDParams pitchCon(33, 300, 2.0);  // pitchCon: PID parameters for pitch control
 
 PIDParams posAgg(0.005, 0, 0.003);  // posAgg: PID parameters for position control
 PIDParams posMove(0.01, 0, 0.003);  // posAgg: PID parameters for position control
-
-PIDParams whileMoving(30, 350, 2);
 
 // PID controller instances
 PID pitchPID(&Input_Pitch, &Output_Pitch, &Setpoint_Pitch, pitchCon._kp, pitchCon._ki, pitchCon._kd, DIRECT);
@@ -189,7 +187,7 @@ void setupPID() {
   pitchPID.SetSampleTime(PID_SAMPLE_TIME_IN_MILLI);
 
   Setpoint_Pos = 0;
-  posPID.SetOutputLimits(-3, 3);
+  posPID.SetOutputLimits(-4, 4);
   posPID.SetMode(AUTOMATIC);
   posPID.SetSampleTime(PID_SAMPLE_TIME_IN_MILLI);
 }
@@ -238,12 +236,12 @@ void setupMPU() {
   mpu.initialize();
   devStatus = mpu.dmpInitialize();
 
-  mpu.setXAccelOffset(1254);
-  mpu.setYAccelOffset(497);
-  mpu.setZAccelOffset(446);
-  mpu.setXGyroOffset(32);
-  mpu.setYGyroOffset(-80);
-  mpu.setZGyroOffset(-31);
+  mpu.setXAccelOffset(1244);
+  mpu.setYAccelOffset(487);
+  mpu.setZAccelOffset(506);
+  mpu.setXGyroOffset(76);
+  mpu.setYGyroOffset(-21);
+  mpu.setZGyroOffset(-103);
 
   if (devStatus == 0) {
     // mpu.CalibrateAccel(6);
@@ -316,8 +314,6 @@ const int servoStepDelay = 20;
 unsigned long turnStart;
 unsigned long turnEnd;
 
-bool rightturn = 0;
-
 /**
  * Function Name: moveServo
  * Logic: Moves the servos to their target positions in small steps to ensure smooth movement. The function checks if the current time exceeds the last move time by the step delay, and if so, it updates the servo positions.
@@ -385,6 +381,7 @@ void safety() {
 
 int pickup_phase = 0;
 int drop_phase = 0;
+int turn_phase = 0;
 unsigned long movement = 0;
 
 void loop() {
@@ -393,14 +390,12 @@ void loop() {
   }
 
   float vel = 0;  // vel: Velocity for motor control
-  int velL, velR;
 
   if (bluetooth.available() > 0) {
     uint8_t btData = bluetooth.read();
     switch (btData) {
       case 0:  // Boost Forward
         movement = millis();
-        pitchPID.SetTunings(whileMoving._kp, whileMoving._kd, whileMoving._ki);
         Setpoint_Pos = 1000;
         wheel_pulse_count_left = 0;
         wheel_pulse_count_right = 0;
@@ -412,7 +407,6 @@ void loop() {
         break;
       case 1:  // Forward
         movement = millis();
-        pitchPID.SetTunings(whileMoving._kp, whileMoving._kd, whileMoving._ki);
         Setpoint_Pos = 300;
         stopping = false;
         rated = 500;
@@ -426,7 +420,6 @@ void loop() {
 
       case 4:  // Backward
         movement = millis();
-        pitchPID.SetTunings(whileMoving._kp, whileMoving._kd, whileMoving._ki);
         Setpoint_Pos = -300;
         wheel_pulse_count_left = 0;
         stopping = false;
@@ -439,7 +432,6 @@ void loop() {
         break;
       case 10:  // Boost Backward
         movement = millis();
-        pitchPID.SetTunings(whileMoving._kp, whileMoving._kd, whileMoving._ki);
         Setpoint_Pos = -1000;
         wheel_pulse_count_left = 0;
         stopping = false;
@@ -458,17 +450,18 @@ void loop() {
         turnStart = millis();
         bluetooth.flush();
         boost = 0;
+        turn_phase = 1;
 
         break;
 
       case 3:  // Rotate right
-        rightturn = 1;
+        stopping = false;
         rated = 200;
         turning = -1;
         turnStart = millis();
         bluetooth.flush();
         boost = 0;
-        stopping = false;
+        turn_phase = 1;
 
         break;
 
@@ -508,10 +501,10 @@ void loop() {
         break;
       case 13:  // Buzzer
         tone(12, 1000, 1000);
+        break;
 
       case 14:  // Slow Forward
         movement = millis();
-        pitchPID.SetTunings(whileMoving._kp, whileMoving._kd, whileMoving._ki);
         Setpoint_Pos = 150;
         stopping = false;
 
@@ -525,7 +518,6 @@ void loop() {
 
       case 15:  // Slow Backward
         movement = millis();
-        pitchPID.SetTunings(whileMoving._kp, whileMoving._kd, whileMoving._ki);
         Setpoint_Pos = -150;
         wheel_pulse_count_left = 0;
         stopping = false;
@@ -537,6 +529,17 @@ void loop() {
 
         break;
 
+      case 7:
+        turn_phase = 2;
+        wheel_pulse_count_left = 0;
+        wheel_pulse_count_right = 0;
+        Setpoint_Pos = 0;
+        Setpoint_Pitch = SETPOINT_PITCH_ANGLE_OFFSET;
+        turnEnd = millis();
+
+        pitchPID.SetTunings(pitchAfterTurn._kp, pitchAfterTurn._ki, pitchAfterTurn._kd);
+        delay(50);
+        break;
       default:
         break;
     }
@@ -607,7 +610,7 @@ void loop() {
     Setpoint_Pitch = SETPOINT_PITCH_ANGLE_OFFSET;
     stopping = true;
   } else {
-    if (abs(Error_Pos) > 20) {
+    if (abs(Error_Pos) > 10) {
       Input_Pos = Error_Pos;
       posPID.Compute(true);
       Setpoint_Pitch = -Output_Pos + SETPOINT_PITCH_ANGLE_OFFSET;
@@ -645,32 +648,22 @@ void loop() {
       break;
   }
 
-  if (turning) {
-    if ((millis() - turnStart) < 5) {
-      rotateMotor(turning * 150, -turning * 150);
-    }
-    // End turn after duration is over
-    else {
-      turning = 0;
-      wheel_pulse_count_left = 0;
-      wheel_pulse_count_right = 0;
-      Setpoint_Pos = 0;
-      Setpoint_Pitch = SETPOINT_PITCH_ANGLE_OFFSET;
-      turnEnd = millis();
+  switch (turn_phase) {
+    case 1:
+      rotateMotor(vel + turning * 150, vel - turning * 150);
+      break;
 
-      pitchPID.SetTunings(pitchCon._kp, pitchCon.Ki, pitchCon._kd);
-      delay(50);
-    }
-  } else {
-    // Apply different PID to turn end
-    if (millis() - turnEnd < 100) {
-      pitchPID.SetTunings(pitchAfterTurn._kp, pitchAfterTurn._ki, pitchAfterTurn._kd);
+    case 2:
       rotateMotor(vel * 1.2, vel * 1.2, turning);
-      wheel_pulse_count_left = 0;
-      wheel_pulse_count_right = 0;
-    } else {
+      if (millis() - turnEnd > 100) {
+        turn_phase = 0;
+        turning = 0;
+        pitchPID.SetTunings(pitchCon._kp, pitchCon.Ki, pitchCon._kd);
+      }
+      break;
+    default:
       rotateMotor(vel * 1.2, vel * 1.2, turning);
-    }
+      break;
   }
   delay(7);
 }
